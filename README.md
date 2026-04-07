@@ -21,7 +21,7 @@ TSE_EventBase scrapes all timely disclosures (適時開示) from TDnet for Tokyo
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/kazumili/TSE_EventBase.git
+   git clone https://github.com/jevwithwind/TSE_EventBase.git
    cd TSE_EventBase
    ```
 
@@ -158,9 +158,11 @@ python run_ai_classify.py --dry-run
 Note: The AI classification is an extension for researchers who want enhanced categorization with English translations and sentiment analysis. It supports any Anthropic-compatible API endpoint, including Claude models, Qwen models, or custom endpoints.
 
 # Check date range of events
+```
 sqlite3 data/tse_eventbase.db "SELECT MIN(event_date), MAX(event_date) FROM events;"
-
+```
 # Count unique tickers
+```
 sqlite3 data/tse_eventbase.db "SELECT COUNT(DISTINCT ticker) FROM events;"
 ```
 
