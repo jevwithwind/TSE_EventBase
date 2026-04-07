@@ -24,9 +24,9 @@ class PriceFetcher:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
     
-    def get_unique_tickers(self) -> List[str]:
+    def get_categorized_tickers(self) -> List[str]:
         """
-        Get all unique tickers from the events table.
+        Get unique tickers that appear in categorized events (event_type != 'other').
         
         Returns:
             List of unique ticker symbols
@@ -34,12 +34,36 @@ class PriceFetcher:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Get unique tickers from events table
-        cursor.execute("SELECT DISTINCT ticker FROM events WHERE ticker IS NOT NULL AND ticker != ''")
+        # Get unique tickers from events table where event_type is not 'other'
+        cursor.execute("""
+            SELECT DISTINCT ticker
+            FROM events
+            WHERE ticker IS NOT NULL
+            AND ticker != ''
+            AND event_type IS NOT NULL
+            AND event_type != ''
+            AND event_type != 'other'
+        """)
         tickers = [row[0] for row in cursor.fetchall()]
         
         conn.close()
         return tickers
+    
+    def get_existing_tickers(self) -> set:
+        """
+        Get set of tickers that already have price data in the prices table.
+        
+        Returns:
+            Set of ticker symbols that already exist in prices table
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT DISTINCT ticker FROM prices WHERE ticker IS NOT NULL")
+        existing_tickers = {row[0] for row in cursor.fetchall()}
+        
+        conn.close()
+        return existing_tickers
     
     def fetch_price_data(self, ticker: str, start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
         """
@@ -131,8 +155,8 @@ class PriceFetcher:
         
         conn.close()
     
-    def fetch_all_prices(self, start_date: str = None, end_date: str = None, 
-                         tickers: List[str] = None) -> int:
+    def fetch_all_prices(self, start_date: str = None, end_date: str = None,
+                         tickers: List[str] = None, dry_run: bool = False) -> int:
         """
         Fetch price data for all unique tickers in the database.
         
@@ -140,25 +164,54 @@ class PriceFetcher:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
             tickers: Specific list of tickers to fetch (if None, fetch all from DB)
+            dry_run: If True, only print how many tickers will be fetched without fetching
             
         Returns:
             Number of tickers processed
         """
-        if not tickers:
-            tickers = self.get_unique_tickers()
+        import time
+        import csv
+        from pathlib import Path
         
         if not tickers:
-            logger.warning("No tickers found in database")
+            tickers = self.get_categorized_tickers()
+        
+        if not tickers:
+            logger.warning("No categorized tickers found in database")
             return 0
         
-        logger.info(f"Starting to fetch price data for {len(tickers)} tickers")
+        # Get existing tickers to skip
+        existing_tickers = self.get_existing_tickers()
+        
+        # Filter out tickers that already exist in prices table
+        tickers_to_fetch = [ticker for ticker in tickers if ticker not in existing_tickers]
+        
+        if not tickers_to_fetch:
+            logger.info("All tickers already have price data in the database")
+            return 0
+        
+        logger.info(f"Found {len(tickers_to_fetch)} tickers to fetch (out of {len(tickers)} total categorized tickers)")
+        
+        if dry_run:
+            print(f"Dry run: Would fetch {len(tickers_to_fetch)} tickers")
+            for ticker in tickers_to_fetch:
+                print(f"  - {ticker}")
+            return len(tickers_to_fetch)
+        
+        logger.info(f"Starting to fetch price data for {len(tickers_to_fetch)} tickers")
         
         processed_count = 0
         failed_count = 0
+        failed_tickers = []
         
-        for i, ticker in enumerate(tickers):
+        # Create data directory if it doesn't exist
+        data_dir = Path("data")
+        data_dir.mkdir(exist_ok=True)
+        
+        for i, ticker in enumerate(tickers_to_fetch):
             try:
-                logger.info(f"Processing {ticker} ({i+1}/{len(tickers)})")
+                logger.info(f"[{i+1}/{len(tickers_to_fetch)}] Fetching {ticker}.T...")
+                print(f"[{i+1}/{len(tickers_to_fetch)}] Fetching {ticker}.T...")
                 
                 price_data = self.fetch_price_data(ticker, start_date, end_date)
                 
@@ -170,10 +223,27 @@ class PriceFetcher:
                 
                 processed_count += 1
                 
+                # Add delay to avoid rate limiting
+                time.sleep(0.5)
+                
             except Exception as e:
                 logger.error(f"Failed to process ticker {ticker}: {e}")
                 failed_count += 1
+                failed_tickers.append({'ticker': ticker, 'error': str(e)})
                 continue
+        
+        # Log failed tickers to CSV
+        if failed_tickers:
+            failed_file = data_dir / "failed_tickers.csv"
+            with open(failed_file, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['ticker', 'error']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for failed in failed_tickers:
+                    writer.writerow(failed)
+            
+            logger.info(f"Logged {len(failed_tickers)} failed tickers to {failed_file}")
         
         logger.info(f"Price fetching completed. Processed: {processed_count}, Failed: {failed_count}")
         return processed_count
@@ -183,8 +253,9 @@ if __name__ == "__main__":
     from config import SCRAPE_START_DATE, SCRAPE_END_DATE
     
     parser = argparse.ArgumentParser(description="Fetch historical stock prices for TSE tickers")
-    parser.add_argument("--start-date", default=SCRAPE_START_DATE, help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end-date", default=SCRAPE_END_DATE, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--start-date", default="2016-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", default="2023-12-31", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--dry-run", action="store_true", help="Print how many tickers will be fetched without fetching")
     args = parser.parse_args()
     
     # Set up logging
@@ -194,6 +265,7 @@ if __name__ == "__main__":
     )
     
     fetcher = PriceFetcher()
-    processed = fetcher.fetch_all_prices(start_date=args.start_date, end_date=args.end_date)
+    processed = fetcher.fetch_all_prices(start_date=args.start_date, end_date=args.end_date, dry_run=args.dry_run)
     
     print(f"\nPrice fetching completed. Processed {processed} tickers.")
+
