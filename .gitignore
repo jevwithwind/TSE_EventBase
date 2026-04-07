@@ -1,0 +1,34 @@
+# Environment variables
+.env
+
+# Database and data exports
+data/tse_eventbase.db
+data/exports/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.pyc
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+tse_eventbase.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
