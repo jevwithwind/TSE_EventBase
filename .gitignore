@@ -32,3 +32,6 @@ tse_eventbase.log
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Local db assessment
+exploration.ipynb
