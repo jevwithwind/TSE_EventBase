@@ -34,4 +34,4 @@ tse_eventbase.log
 Thumbs.db
 
 # Local db assessment
-exploration.ipynb
+explorations/
