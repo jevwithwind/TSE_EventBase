@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Event classifier module for TSE_EventBase project.
-Uses Anthropic's Claude API to classify corporate events.
+Uses any OpenAI-compatible API to classify corporate events.
 """
 
 import sys
@@ -10,26 +10,24 @@ import os
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-import anthropic
+from openai import OpenAI
 import sqlite3
 import json
 import logging
 from typing import List, Dict, Optional
-from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, CLASSIFICATION_BATCH_SIZE, DB_PATH, EVENT_TYPES, DIRECTIONS, MAGNITUDES
+from config import OPENAI_API_KEY, MODEL, CLASSIFICATION_BATCH_SIZE, DB_PATH, EVENT_TYPES, DIRECTIONS, MAGNITUDES
 
 logger = logging.getLogger(__name__)
 
 class EventClassifier:
     def __init__(self, api_key: str, base_url: str = None, db_path: str = DB_PATH):
-        client_params = {
-            "api_key": api_key
-        }
+        client_params = {"api_key": api_key}
         if base_url:
             client_params["base_url"] = base_url
-        
-        self.client = anthropic.Anthropic(**client_params)
+
+        self.client = OpenAI(**client_params)
         self.db_path = db_path
-        self.model = ANTHROPIC_MODEL
+        self.model = MODEL
     
     def get_unclassified_events(self, limit: int = None) -> List[Dict]:
         """
@@ -175,18 +173,18 @@ Be accurate and consistent in your classifications. If you cannot determine a cl
 Return only the JSON response with classifications for all events."""
         
         try:
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=4000,
                 temperature=0.1,
-                system=system_prompt,
                 messages=[
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ]
             )
-            
+
             # Extract the response content
-            response_text = response.content[0].text.strip()
+            response_text = response.choices[0].message.content.strip()
             
             # Clean up potential markdown formatting
             if response_text.startswith("```json"):
@@ -209,7 +207,7 @@ Return only the JSON response with classifications for all events."""
             logger.error(f"Response text: {response_text}")
             return []
         except Exception as e:
-            logger.error(f"Error calling Anthropic API: {e}")
+            logger.error(f"Error calling OpenAI-compatible API: {e}")
             return []
     
     def update_event_classification(self, event_id: int, classification: Dict):
@@ -328,23 +326,22 @@ Return only the JSON response with classifications for all events."""
 
 if __name__ == "__main__":
     import argparse
-    from config import ANTHROPIC_API_KEY
-    
-    if not ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-    
-    parser = argparse.ArgumentParser(description="Classify events using Anthropic API")
-    parser.add_argument("--batch-size", type=int, default=CLASSIFICATION_BATCH_SIZE, 
+    from config import OPENAI_API_KEY
+
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY environment variable is required")
+
+    parser = argparse.ArgumentParser(description="Classify events using an OpenAI-compatible API")
+    parser.add_argument("--batch-size", type=int, default=CLASSIFICATION_BATCH_SIZE,
                        help="Number of events to process in each batch")
     args = parser.parse_args()
-    
-    # Set up logging
+
     logging.basicConfig(
         level=getattr(logging, 'INFO'),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
-    classifier = EventClassifier(api_key=ANTHROPIC_API_KEY)
+
+    classifier = EventClassifier(api_key=OPENAI_API_KEY)
     classifier.classify_all_unclassified(batch_size=args.batch_size)
-    
+
     print("Event classification completed.")

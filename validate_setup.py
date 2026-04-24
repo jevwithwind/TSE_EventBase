@@ -9,7 +9,7 @@ import sys
 import subprocess
 import logging
 from pathlib import Path
-from config import DB_PATH, EDINET_API_KEY, ANTHROPIC_API_KEY
+from config import DB_PATH, EDINET_API_KEY, OPENAI_API_KEY
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +27,7 @@ def check_dependencies():
         'pandas',
         'sqlite3',
         'requests',
-        'anthropic',
+        'openai',
         'openbb',
         'edinet-tools'
     ]
@@ -62,7 +62,7 @@ def check_environment_variables():
     
     checks = [
         ("EDINET_API_KEY", EDINET_API_KEY),
-        ("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
+        ("OPENAI_API_KEY", OPENAI_API_KEY)
     ]
     
     missing_vars = []

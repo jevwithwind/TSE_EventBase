@@ -14,11 +14,11 @@ SCRAPE_END_DATE = os.getenv("SCRAPE_END_DATE", datetime.now().strftime("%Y-%m-%d
 
 # API Keys
 EDINET_API_KEY = os.getenv("EDINET_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL") or None
 
-# Anthropic model configuration
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "qwen3.5-plus")
+# Model configuration for AI classification
+MODEL = os.getenv("MODEL", "gpt-4o")
 
 # Export directory
 EXPORT_DIR = os.getenv("EXPORT_DIR", "data/exports")

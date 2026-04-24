@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 [OPTIONAL] AI-powered event classification for TSE_EventBase project.
-This script runs the event classifier on all unclassified events using Anthropic-compatible APIs.
+This script runs the event classifier on all unclassified events using any OpenAI-compatible API.
 This is optional and not required for the core pipeline.
-Supports any Anthropic-compatible API (Claude, Qwen, etc.).
+Supports any OpenAI-compatible API (OpenAI, Azure, Ollama, Qwen, etc.).
 """
 
 import argparse
 import logging
-from config import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLASSIFICATION_BATCH_SIZE
+from config import OPENAI_API_KEY, OPENAI_BASE_URL, CLASSIFICATION_BATCH_SIZE
 from classifier.event_classifier import EventClassifier
 import sqlite3
 
@@ -31,8 +31,8 @@ def main():
                        help="Print count of matching events without classifying")
     args = parser.parse_args()
     
-    if not ANTHROPIC_API_KEY:
-        logger.error("ANTHROPIC_API_KEY environment variable is required")
+    if not OPENAI_API_KEY:
+        logger.error("OPENAI_API_KEY environment variable is required for AI classification")
         return 1
     
     # Connect to database to get event counts
@@ -111,8 +111,8 @@ def main():
     
     # Pass filter parameters to classifier
     classifier = EventClassifier(
-        api_key=ANTHROPIC_API_KEY,
-        base_url=ANTHROPIC_BASE_URL
+        api_key=OPENAI_API_KEY,
+        base_url=OPENAI_BASE_URL
     )
     
     # Modify the classifier to handle filtered classification

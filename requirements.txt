@@ -8,7 +8,7 @@ pandas==2.2.2
 edinet-tools==0.5.0
 
 # AI/ML
-anthropic==0.25.0
+openai>=1.0.0
 
 # Finance data
 openbb==4.4.4
