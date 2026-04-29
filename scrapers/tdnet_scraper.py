@@ -201,15 +201,17 @@ class TDnetScraper:
                 logger.debug(f"Skipping disclosure with missing ticker or headline: {disclosure.get('title', 'No title')}")
                 return None
             
-            # Extract time if available - pubdate might contain time info
-            pubdate = disclosure.get('pubdate', '')
+            # Extract time from pubdate — API returns "YYYY-MM-DD HH:MM:SS" (space-separated)
+            pubdate = disclosure.get('pubdate', '') or ''
             event_time = None
-            if pubdate and 'T' in pubdate:  # ISO format with time
-                try:
+            try:
+                if ' ' in pubdate:          # "2016-01-04 15:30:00"
+                    event_time = pubdate.split(' ')[1][:5]
+                elif 'T' in pubdate:        # ISO fallback "2016-01-04T15:30:00+09:00"
                     dt = datetime.fromisoformat(pubdate.replace('Z', '+00:00'))
                     event_time = dt.strftime('%H:%M')
-                except:
-                    pass  # If parsing fails, leave as None
+            except Exception:
+                pass
             
             event_data = {
                 'ticker': ticker,
