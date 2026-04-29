@@ -3,6 +3,7 @@
 
 # Database and data exports
 data/tse_eventbase.db
+data/tse_eventbase_backup_*.db
 data/exports/
 
 # Virtual environments
@@ -35,3 +36,10 @@ Thumbs.db
 
 # Local db assessment
 explorations/
+
+# Local analysis scripts and outputs (not synced)
+run_preview_flag.py
+run_analysis.py
+run_postflag_analysis.py
+docs/nikkei_preview_guide.md
+summary.md

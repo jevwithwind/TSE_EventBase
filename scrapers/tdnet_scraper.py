@@ -79,107 +79,101 @@ class TDnetScraper:
             logger.error(f"Error parsing JSON response for {date_str}: {e}")
             return None
     
-    def _insert_event(self, event_data: Dict):
+    def _insert_events_batch(self, conn: sqlite3.Connection, rows: list):
         """
-        Insert a single event into the database.
-        
+        Batch-insert a day's worth of events using INSERT OR IGNORE.
+        Duplicate source_doc_ids are silently skipped via the unique index.
+
         Args:
-            event_data: Dictionary containing event information
+            conn: Open SQLite connection (kept alive across the day's work)
+            rows: List of 9-tuples matching the INSERT column order
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Check if event already exists (idempotency)
-        cursor.execute(
-            "SELECT COUNT(*) FROM events WHERE source_doc_id = ? AND source = 'tdnet'",
-            (event_data.get('source_doc_id'),)
-        )
-        exists = cursor.fetchone()[0] > 0
-        
-        if exists:
-            logger.debug(f"Event with doc_id {event_data.get('source_doc_id')} already exists, skipping")
-            conn.close()
+        if not rows:
             return
-        
-        # Insert the event
-        cursor.execute("""
-            INSERT INTO events (
-                ticker, company_name, event_date, event_time, headline, 
+        conn.executemany("""
+            INSERT OR IGNORE INTO events (
+                ticker, company_name, event_date, event_time, headline,
                 source, source_url, source_doc_id, raw_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_data.get('ticker'),
-            event_data.get('company_name'),
-            event_data.get('event_date'),
-            event_data.get('event_time'),
-            event_data.get('headline'),
-            'tdnet',
-            event_data.get('source_url'),
-            event_data.get('source_doc_id'),
-            json.dumps(event_data.get('raw_json', {}), ensure_ascii=False)
-        ))
-        
+        """, rows)
         conn.commit()
-        conn.close()
     
     def scrape_date_range(self, start_date: str, end_date: str) -> int:
         """
         Scrape TDnet disclosures for a date range.
-        
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
-            
+
         Returns:
-            Number of events scraped
+            Number of events inserted (duplicates excluded)
         """
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
+        # Single connection for the entire run with performance PRAGMAs
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA cache_size = -64000;")
+
         total_events = 0
-        
-        current_date = start_dt
-        while current_date <= end_dt:
-            date_str = current_date.strftime("%Y-%m-%d")
-            
-            # Skip weekends and holidays
-            if self._is_weekend_or_holiday(date_str):
-                logger.info(f"Skipping {date_str} (weekend/holiday)")
-                current_date += timedelta(days=1)
-                continue
-            
-            logger.info(f"Fetching disclosures for {date_str}")
-            
-            disclosures = self._fetch_disclosures_for_date(date_str)
-            
-            if disclosures is None:
-                logger.warning(f"No data returned for {date_str}, continuing...")
-                current_date += timedelta(days=1)
-                continue
-            
-            events_count = 0
-            for disclosure in disclosures:
-                try:
-                    # Extract relevant information from disclosure
-                    event_data = self._parse_disclosure(disclosure, date_str)
-                    
-                    if event_data:
-                        self._insert_event(event_data)
-                        events_count += 1
-                        total_events += 1
-                        
-                except Exception as e:
-                    logger.error(f"Error processing disclosure for {date_str}: {e}")
+
+        try:
+            current_date = start_dt
+            while current_date <= end_dt:
+                date_str = current_date.strftime("%Y-%m-%d")
+
+                if self._is_weekend_or_holiday(date_str):
+                    logger.info(f"Skipping {date_str} (weekend/holiday)")
+                    current_date += timedelta(days=1)
                     continue
-            
-            logger.info(f"Processed {events_count} events for {date_str}")
-            
-            # Respect rate limiting
-            time.sleep(TDNET_DELAY)
-            
-            current_date += timedelta(days=1)
-        
-        logger.info(f"TDnet scraping completed. Total events added: {total_events}")
+
+                logger.info(f"Fetching disclosures for {date_str}")
+                disclosures = self._fetch_disclosures_for_date(date_str)
+
+                if disclosures is None:
+                    logger.warning(f"No data returned for {date_str}, continuing...")
+                    current_date += timedelta(days=1)
+                    continue
+
+                # Parse all disclosures for the day into tuples
+                rows = []
+                for disclosure in disclosures:
+                    try:
+                        event_data = self._parse_disclosure(disclosure, date_str)
+                        if event_data:
+                            rows.append((
+                                event_data.get('ticker'),
+                                event_data.get('company_name'),
+                                event_data.get('event_date'),
+                                event_data.get('event_time'),
+                                event_data.get('headline'),
+                                'tdnet',
+                                event_data.get('source_url'),
+                                event_data.get('source_doc_id'),
+                                json.dumps(event_data.get('raw_json', {}), ensure_ascii=False)
+                            ))
+                    except Exception as e:
+                        logger.error(f"Error processing disclosure for {date_str}: {e}")
+                        continue
+
+                # Single batch insert + commit for the entire day
+                before = conn.execute("SELECT changes()").fetchone()[0]
+                self._insert_events_batch(conn, rows)
+                inserted = conn.execute("SELECT changes()").fetchone()[0]
+                total_events += inserted
+
+                logger.info(f"Processed {date_str}: {len(rows)} parsed, {inserted} inserted")
+
+                time.sleep(TDNET_DELAY)
+                current_date += timedelta(days=1)
+
+        finally:
+            conn.close()
+
+        logger.info(f"TDnet scraping completed. Total events inserted: {total_events}")
         return total_events
     
     def _parse_disclosure(self, disclosure: Dict, date_str: str) -> Optional[Dict]:

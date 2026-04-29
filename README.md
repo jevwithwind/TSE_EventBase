@@ -31,14 +31,15 @@ python run_tdnet.py --start-date 2025-01-01 --end-date 2025-01-31
 ## Core pipeline
 
 ```
-db/init_db.py          →  create/migrate database
-run_tdnet.py           →  scrape TDnet (no key needed)
-run_edinet.py          →  scrape EDINET (needs EDINET_API_KEY)
-run_scrape.py          →  scrape both in one command
-run_categorize.py      →  keyword-based event categorization (no API needed)
-run_prices.py          →  fetch historical stock prices via OpenBB
-run_export.py          →  export tables to CSV / Parquet
-run_ai_classify.py     →  [optional] AI-powered classification
+db/init_db.py              →  create/migrate database
+run_tdnet.py               →  scrape TDnet (no key needed)
+run_edinet.py              →  scrape EDINET (needs EDINET_API_KEY)
+run_scrape.py              →  scrape both in one command
+run_categorize.py          →  keyword-based event categorization (no API needed)
+run_prices.py              →  fetch historical stock prices via OpenBB
+run_export.py              →  export tables to CSV / Parquet
+run_ai_classify.py         →  [optional] AI-powered classification
+generate_filter_list.py    →  export filtered event list for downstream pipelines
 ```
 
 ## Usage
@@ -55,25 +56,27 @@ python db/init_db.py --reset
 ### Scrape TDnet (Yanoshin API — no key needed)
 
 ```bash
-python run_tdnet.py --start-date 2025-01-01 --end-date 2025-01-31
+python run_tdnet.py --start-date 2016-01-01 --end-date 2025-12-31
 ```
 
 ### Scrape EDINET (requires EDINET_API_KEY)
 
 ```bash
-python run_edinet.py --start-date 2025-01-01 --end-date 2025-01-31
+python run_edinet.py --start-date 2016-01-01 --end-date 2025-12-31
 ```
 
 ### Scrape both sources at once
 
 ```bash
 # Both (EDINET is skipped gracefully if EDINET_API_KEY is not set)
-python run_scrape.py --start-date 2025-01-01 --end-date 2025-01-31
+python run_scrape.py --start-date 2016-01-01 --end-date 2025-12-31
 
 # Explicit source selection
-python run_scrape.py --start-date 2025-01-01 --end-date 2025-01-31 --source tdnet
-python run_scrape.py --start-date 2025-01-01 --end-date 2025-01-31 --source edinet
+python run_scrape.py --start-date 2016-01-01 --end-date 2025-12-31 --source tdnet
+python run_scrape.py --start-date 2016-01-01 --end-date 2025-12-31 --source edinet
 ```
+
+The scraper is safe to interrupt and resume — `INSERT OR IGNORE` on a unique `source_doc_id` index prevents duplicates on re-run.
 
 ### Categorize events (keyword-based, no API needed)
 
@@ -83,8 +86,10 @@ python run_categorize.py
 
 ### Fetch historical prices
 
+Pad the window by one month each side to support event study windows:
+
 ```bash
-python run_prices.py --start-date 2025-01-01 --end-date 2025-12-31
+python run_prices.py --start-date 2015-12-01 --end-date 2025-12-31
 ```
 
 ### Export data
@@ -98,6 +103,18 @@ python run_export.py --tables events prices
 python run_export.py --format csv
 ```
 
+### Generate event filter list
+
+Exports a CSV of the six core event types for use in downstream pipelines (e.g. tick data stream-and-discard):
+
+```bash
+python generate_filter_list.py
+# → data/exports/event_filter_list.csv
+```
+
+Output columns: `ticker`, `event_date`, `event_time`, `event_type`, `headline`.
+Covers `earnings`, `forecast_revision`, `dividend`, `buyback`, `ma`, `tender_offer`.
+
 ### Database health checks
 
 ```bash
@@ -105,6 +122,10 @@ sqlite3 data/tse_eventbase.db "SELECT source, COUNT(*) FROM events GROUP BY sour
 sqlite3 data/tse_eventbase.db "SELECT event_type, COUNT(*) FROM events GROUP BY event_type ORDER BY 2 DESC;"
 sqlite3 data/tse_eventbase.db "SELECT MIN(event_date), MAX(event_date) FROM events;"
 sqlite3 data/tse_eventbase.db "SELECT COUNT(DISTINCT ticker) FROM events;"
+
+# Confirm no duplicates
+sqlite3 data/tse_eventbase.db \
+  "SELECT source_doc_id, COUNT(*) FROM events GROUP BY source_doc_id HAVING COUNT(*) > 1 LIMIT 5;"
 ```
 
 ## Optional: AI-powered classification
@@ -161,13 +182,32 @@ All tables live in a single SQLite file (default: `data/tse_eventbase.db`).
 | `headline` | Original Japanese headline |
 | `headline_en` | English translation (AI) |
 | `summary` | English summary (AI) |
-| `event_type` | earnings / forecast_revision / dividend / buyback / ma / tender_offer / leadership_change / stock_split / large_holding / capital_raise / delisting / other |
+| `event_type` | See event type taxonomy below |
 | `direction` | positive / negative / neutral (AI) |
 | `magnitude` | large / medium / small (AI) |
 | `source` | `tdnet` or `edinet` |
 | `source_url` | Original document URL |
-| `source_doc_id` | Original document ID |
+| `source_doc_id` | Original document ID (unique index) |
 | `raw_json` | Full API response |
+
+**Event type taxonomy** (assigned by `run_categorize.py`):
+
+| event_type | Keyword signal |
+|---|---|
+| `earnings` | 決算短信 |
+| `forecast_revision` | 業績予想 |
+| `dividend` | 配当 |
+| `buyback` | 自己株式 |
+| `ma` | 合併 / 買収 |
+| `tender_offer` | 公開買付 / TOB / MBO |
+| `ceo_change` | 代表取締役 |
+| `executive_change` | 役員の異動 / 役員人事 |
+| `stock_split` | 株式分割 |
+| `large_holding` | 大量保有 / 主要株主の異動 |
+| `third_party_allotment` | 第三者割当 |
+| `borrowing` | 資金の借入 |
+| `capital_change` | 資本 |
+| `other` | Everything else |
 
 ### `prices`
 
@@ -181,13 +221,25 @@ Financial metrics extracted from EDINET securities reports: net sales, operating
 
 Company metadata: sector, market segment (Prime / Standard / Growth), listing/delisting dates.
 
+## Performance notes
+
+The TDnet scraper is optimized for bulk historical loads:
+
+- **Single connection per run** — one `sqlite3.connect()` for the entire date range, not per row
+- **WAL mode** — `PRAGMA journal_mode = WAL` allows reads during writes
+- **Batch insert** — all rows for a trading day are accumulated and written in a single `executemany()` + `commit()`
+- **`INSERT OR IGNORE`** — duplicate detection is handled by a unique index on `source_doc_id`, eliminating the per-row `SELECT COUNT(*)` check
+- **Cache** — `PRAGMA cache_size = -64000` (64 MB) reduces I/O on large re-scrapes
+
+On a typical machine, a full 2016–2025 re-scrape (~750K events) completes in under 90 minutes, bottlenecked entirely by the Yanoshin API's response time and the 1-second courtesy delay between days.
+
 ## API notes
 
 ### Yanoshin TDnet API
 
 - URL: `https://webapi.yanoshin.jp/webapi/tdnet/list/YYYYMMDD.json?limit=10000`
 - No authentication required
-- ~350 events per trading day
+- ~350 events per trading day; ~85K per year as of 2025
 - Response: `{"total_count": N, "items": [{"Tdnet": {...}}]}`
 
 ### EDINET API
@@ -195,52 +247,6 @@ Company metadata: sector, market segment (Prime / Standard / Growth), listing/de
 - Wrapped via `edinet-tools` library
 - Free tier: 100 calls/day
 - Covers: securities reports, large-holding reports (5%+), tender offers, treasury buyback plans
-
-## Analysis examples
-
-### Load into pandas
-
-```python
-import pandas as pd
-
-events = pd.read_csv('data/exports/events.csv')
-prices = pd.read_csv('data/exports/prices.csv')
-
-# TDnet vs EDINET breakdown
-print(events.groupby('source').size())
-
-# Filter for TDnet earnings events
-earnings = events[(events['source'] == 'tdnet') & (events['event_type'] == 'earnings')]
-```
-
-### Basic event study setup
-
-```python
-import pandas as pd
-
-events = pd.read_csv('data/exports/events.csv')
-prices = pd.read_csv('data/exports/prices.csv')
-prices['date'] = pd.to_datetime(prices['date'])
-events['event_date'] = pd.to_datetime(events['event_date'])
-
-def get_price_window(ticker, event_date, prices, window=5):
-    mask = (prices['ticker'] == ticker) & \
-           (prices['date'] >= event_date - pd.Timedelta(days=window)) & \
-           (prices['date'] <= event_date + pd.Timedelta(days=window))
-    return prices[mask].sort_values('date')
-```
-
-### Filtering for classified events
-
-```python
-# After running run_ai_classify.py
-classified = events[events['event_type'].notna()]
-
-positive_earnings = classified[
-    (classified['event_type'] == 'earnings') &
-    (classified['direction'] == 'positive')
-]
-```
 
 ## Contributing
 

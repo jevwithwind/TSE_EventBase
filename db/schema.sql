@@ -66,4 +66,5 @@ CREATE TABLE IF NOT EXISTS tickers (
 CREATE INDEX IF NOT EXISTS idx_events_ticker ON events(ticker);
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_doc_id ON events(source_doc_id);
 CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);
