@@ -560,8 +560,7 @@ def pre_filter_auto_classify(db_path: str, where_filter: str | None = None) -> i
                 ai_magnitude = 'medium',
                 ai_confidence = 'low',
                 ai_headline_en = 'Earnings Summary',
-                ai_summary = 'Quarterly/annual earnings report '
-                             '(auto-classified: no directional signal in headline)',
+                ai_summary = 'Quarterly/annual earnings report (auto-classified: no directional signal in headline)',
                 classified_at = CURRENT_TIMESTAMP
             WHERE {base_where} {extra_filter}
         """
@@ -602,7 +601,7 @@ def run(
             "Run migrate_db.py first."
         )
 
-    if pre_filter:
+    if pre_filter and not dry_run:
         n_auto = pre_filter_auto_classify(db_path, where_filter)
         if n_auto > 0:
             logger.info(
