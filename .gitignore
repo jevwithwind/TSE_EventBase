@@ -1,9 +1,10 @@
-# Environment variables
+# Secrets
 .env
+*.env
 
-# Database and data exports
-data/tse_eventbase.db
-data/tse_eventbase_backup_*.db
+# Database files (too large for git, contain generated data)
+data/*.db
+data/*_backup_*.db
 data/exports/
 
 # Virtual environments
@@ -12,27 +13,36 @@ venv/
 env/
 .venv/
 
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
 *.so
-*.pyc
 __pycache__/
+.pytest_cache/
 
 # IDE
 .vscode/
 .idea/
 
 # Logs
+classifier_v2/logs/
 *.log
 tse_eventbase.log
+
+# Status files (runtime artifacts)
+classification_status.json
 
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Validation outputs (generated, reproducible)
+classifier_v2/validation/confusion_matrix_*.png
+classifier_v2/validation/error_analysis.csv
+classifier_v2/validation/metrics_report.md
 
 # Local db assessment
 explorations/
