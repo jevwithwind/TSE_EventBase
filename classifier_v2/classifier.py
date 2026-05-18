@@ -491,6 +491,25 @@ def _write_status(status_file: str, payload: dict) -> None:
             pass
 
 
+def reset_transient_failures(db_path: str) -> int:
+    """Reset classification_failed_at for transient errors (timeout, connection, json).
+    Returns the number of rows reset."""
+    conn = sqlite3.connect(db_path)
+    try:
+        n = conn.execute(
+            "UPDATE events "
+            "SET classification_failed_at = NULL, classification_error = NULL "
+            "WHERE classification_failed_at IS NOT NULL "
+            "  AND (classification_error LIKE '%timed out%' "
+            "       OR classification_error LIKE '%Connection error%' "
+            "       OR classification_error LIKE '%json_decode_error%')"
+        ).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def run(
     db_path: str,
     api_key: str,
@@ -504,6 +523,7 @@ def run(
     dry_run: bool = False,
     concurrency: int = 1,
     status_file: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SEC,
 ) -> dict[str, Any]:
     """Top-level orchestrator. Returns summary stats."""
     missing_cols = check_schema(db_path)
@@ -539,7 +559,7 @@ def run(
                 "estimate_out": approx_total_out}
 
     client = LLMClient(api_key=api_key, base_url=base_url, model=model,
-                       max_retries=max_retries)
+                       max_retries=max_retries, timeout=timeout)
 
     processed = 0
     n_ok = 0
@@ -642,7 +662,6 @@ def run(
                         "last_update": time.strftime("%Y-%m-%d %H:%M:%S"),
                     })
 
-    elapsed = time.time() - start
     logger.info("=" * 60)
 
     elapsed = time.time() - start
@@ -691,6 +710,9 @@ def main():
     p.add_argument("--delay-ms", type=int, default=DEFAULT_DELAY_MS,
                    help="Delay between batches in milliseconds.")
     p.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SEC,
+                   help="API request timeout in seconds (default 60). "
+                        "Increase for larger batch sizes (e.g. 120 for batch-size=50).")
     p.add_argument("--concurrency", type=int, default=1,
                    help="Number of concurrent API workers (default 1 = sequential). "
                         "8 is a reasonable default for high-throughput plans.")
@@ -699,8 +721,15 @@ def main():
                         "Lets you monitor a long run via `type <file>` from another shell.")
     p.add_argument("--filter", default=None,
                    help="Extra SQL WHERE clause (e.g. \"event_type='earnings'\")")
+    p.add_argument("--in-scope-only", action="store_true",
+                   help="Classify only sentiment-relevant event types: "
+                        "earnings, forecast_revision, dividend, buyback, ma, tender_offer. "
+                        "Equivalent to --filter but avoids shell quoting issues.")
     p.add_argument("--dry-run", action="store_true",
                    help="Print sample prompt + token estimates, don't call API.")
+    p.add_argument("--reset-failures", action="store_true",
+                   help="Reset transient failures (timeout/connection/json) before starting. "
+                        "Previously-failed events become retryable.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -708,6 +737,14 @@ def main():
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+
+    # Reset transient failures before checking credentials or launching
+    if args.reset_failures:
+        n_reset = reset_transient_failures(args.db)
+        if n_reset > 0:
+            logger.info("Reset %d transient failures for retry", n_reset)
+        else:
+            logger.info("No transient failures to reset")
 
     if not args.dry_run:
         missing = []
@@ -725,6 +762,16 @@ def main():
             logger.error("  MODEL=qwen3.6-plus")
             sys.exit(2)
 
+    # Resolve the filter
+    IN_SCOPE_FILTER = (
+        "event_type IN ('earnings','forecast_revision','dividend',"
+        "'buyback','ma','tender_offer')"
+    )
+    where_filter = args.filter
+    if args.in_scope_only:
+        where_filter = IN_SCOPE_FILTER
+        logger.info("Using in-scope filter: %s", IN_SCOPE_FILTER)
+
     try:
         summary = run(
             db_path=args.db,
@@ -735,10 +782,11 @@ def main():
             batch_size=args.batch_size,
             delay_ms=args.delay_ms,
             max_retries=args.max_retries,
-            where_filter=args.filter,
+            where_filter=where_filter,
             dry_run=args.dry_run,
             concurrency=args.concurrency,
             status_file=args.status_file,
+            timeout=args.timeout,
         )
         logger.info("Summary: %s", summary)
         return 0
