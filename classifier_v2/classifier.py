@@ -510,6 +510,74 @@ def reset_transient_failures(db_path: str) -> int:
         conn.close()
 
 
+def pre_filter_auto_classify(db_path: str, where_filter: str | None = None) -> int:
+    """Auto-classify earnings events with no directional signal in the headline.
+
+    Targets: 決算短信, 四半期決算, 中間期 headlines that contain NO
+    sentiment keywords (上方修正, 下方修正, 増配, 減配, 特別利益,
+    特別損失, 無配, 復配, 差異, 訂正).
+
+    Sets ai_event_type=earnings, ai_direction=neutral, ai_magnitude=medium,
+    ai_confidence=low, and classified_at to mark them done.  These will be
+    skipped by subsequent AI batches, roughly halving the API load.
+
+    Returns the number of events auto-classified.
+    """
+    base_where = (
+        "classified_at IS NULL AND classification_failed_at IS NULL "
+        "AND event_type = 'earnings'"
+        " AND (headline LIKE '%決算短信%' OR headline LIKE '%四半期%'"
+        "      OR headline LIKE '%中間期%')"
+        " AND headline NOT LIKE '%訂正%'"
+        " AND headline NOT LIKE '%上方修正%'"
+        " AND headline NOT LIKE '%下方修正%'"
+        " AND headline NOT LIKE '%増配%'"
+        " AND headline NOT LIKE '%減配%'"
+        " AND headline NOT LIKE '%特別利益%'"
+        " AND headline NOT LIKE '%特別損失%'"
+        " AND headline NOT LIKE '%無配%'"
+        " AND headline NOT LIKE '%復配%'"
+        " AND headline NOT LIKE '%差異%'"
+        " AND headline NOT LIKE '%予想%'"
+    )
+    extra_filter = (
+        f" AND ({where_filter})" if where_filter else ""
+    )
+
+    conn = sqlite3.connect(db_path)
+    try:
+        count_sql = f"SELECT COUNT(*) FROM events WHERE {base_where} {extra_filter}"
+        eligible = conn.execute(count_sql).fetchone()[0]
+        if eligible == 0:
+            logger.info("Pre-filter: 0 events eligible for auto-classification")
+            return 0
+
+        update_sql = f"""
+            UPDATE events SET
+                ai_event_type = 'earnings',
+                ai_event_subtype = 'quarterly_or_annual',
+                ai_direction = 'neutral',
+                ai_magnitude = 'medium',
+                ai_confidence = 'low',
+                ai_headline_en = 'Earnings Summary',
+                ai_summary = 'Quarterly/annual earnings report '
+                             '(auto-classified: no directional signal in headline)',
+                classified_at = CURRENT_TIMESTAMP
+            WHERE {base_where} {extra_filter}
+        """
+        n = conn.execute(update_sql).rowcount
+        conn.commit()
+        logger.info(
+            "Pre-filter: auto-classified %d neutral earnings events "
+            "(no directional markers in headline). Remaining events will "
+            "be sent to the LLM.",
+            n,
+        )
+        return n
+    finally:
+        conn.close()
+
+
 def run(
     db_path: str,
     api_key: str,
@@ -524,6 +592,7 @@ def run(
     concurrency: int = 1,
     status_file: str | None = None,
     timeout: int = DEFAULT_TIMEOUT_SEC,
+    pre_filter: bool = False,
 ) -> dict[str, Any]:
     """Top-level orchestrator. Returns summary stats."""
     missing_cols = check_schema(db_path)
@@ -532,6 +601,14 @@ def run(
             f"DB schema missing columns: {missing_cols}. "
             "Run migrate_db.py first."
         )
+
+    if pre_filter:
+        n_auto = pre_filter_auto_classify(db_path, where_filter)
+        if n_auto > 0:
+            logger.info(
+                "Pre-filter saved ~%d LLM calls (%.0f%% reduction)",
+                n_auto, n_auto / max(n_auto + count_unclassified(db_path, where_filter), 1) * 100,
+            )
 
     total = count_unclassified(db_path, where_filter)
     target = total if limit is None else min(total, limit)
@@ -730,6 +807,10 @@ def main():
     p.add_argument("--reset-failures", action="store_true",
                    help="Reset transient failures (timeout/connection/json) before starting. "
                         "Previously-failed events become retryable.")
+    p.add_argument("--pre-filter", action="store_true",
+                   help="Auto-classify neutral earnings reports (決算短信 etc. without "
+                        "directional keywords) before the main LLM run. Roughly halves "
+                        "API calls by skipping events that are unambiguously neutral.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -787,6 +868,7 @@ def main():
             concurrency=args.concurrency,
             status_file=args.status_file,
             timeout=args.timeout,
+            pre_filter=args.pre_filter,
         )
         logger.info("Summary: %s", summary)
         return 0

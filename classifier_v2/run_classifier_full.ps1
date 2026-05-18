@@ -18,6 +18,7 @@ $pyArgs = @(
     "$WORK_DIR\classifier.py",
     "--db", $DB,
     "--in-scope-only",
+    "--pre-filter",
     "--batch-size", "20",
     "--timeout", "90",
     "--concurrency", "4",
