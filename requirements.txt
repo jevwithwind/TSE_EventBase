@@ -12,3 +12,6 @@ openai>=1.0.0
 
 # Finance data
 openbb==4.4.4
+
+# J-Quants API (Stage 2: financial fundamentals enrichment)
+jquants-api-client==2.1.0

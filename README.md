@@ -14,6 +14,7 @@ TSE_EventBase collects corporate disclosure events from two sources — **TDnet*
 |---|---|---|
 | **TDnet** (Yanoshin API) | All timely disclosures (~350/day): earnings, guidance revisions, dividends, M&A, buybacks, leadership changes, etc. | No |
 | **EDINET** (FSA) | Formal regulatory filings: full securities reports, large-holding notifications (5%+), tender offers, treasury buyback plans | Yes — register at [edinet-fsa.go.jp](https://disclosure.edinet-fsa.go.jp/) |
+| **J-Quants** (JPX) | Financial-statement *fundamentals* (actual & forecast sales / profit / EPS / dividends) used to enrich earnings events with a beat-vs-forecast signal (Stage 2) | Yes — API key from [jpx-jquants.com](https://jpx-jquants.com/) |
 
 Both sources write into the same SQLite database, differentiated by the `source` column (`"tdnet"` or `"edinet"`). This allows straightforward joins with the shared `prices` and `tickers` tables.
 
@@ -37,6 +38,7 @@ run_edinet.py              →  scrape EDINET (needs EDINET_API_KEY)
 run_scrape.py              →  scrape both in one command
 run_categorize.py          →  keyword-based event categorization (no API needed)
 run_prices.py              →  fetch historical stock prices via OpenBB
+run_jquants.py             →  [optional] fetch J-Quants financial statements (needs JQUANTS_API_KEY)
 run_export.py              →  export tables to CSV / Parquet
 run_ai_classify.py         →  [optional] AI-powered classification
 generate_filter_list.py    →  export filtered event list for downstream pipelines
@@ -153,6 +155,28 @@ python run_ai_classify.py --dry-run
 
 AI classification is fully optional. The keyword-based categorizer (`run_categorize.py`) works without any API key and covers most research needs.
 
+## Optional: Financial enrichment (J-Quants — Stage 2)
+
+Headline-based stages know *when / who / what kind* of disclosure occurred, but not *how the numbers came out*. Stage 2 fetches actual reported financials from the **J-Quants API** and compares them to the company's **own prior forecast**, writing an objective beat-vs-forecast signal into the `events.data_*` columns.
+
+```bash
+# One-time: install client, set JQUANTS_API_KEY in .env, migrate schema
+pip install jquants-api-client
+python jquants/migrate_db.py --db data/tse_eventbase.db
+
+# Confirm the API columns your plan returns (one live call)
+python run_jquants.py --probe
+
+# Fetch financial statements (idempotent, cached under data/jquants_cache/)
+python run_jquants.py --start-date 2016-01-01 --end-date 2025-12-31
+
+# Derive the beat/miss signal onto events (dry-run first)
+python classifier_v2/stage2_financial.py --db data/tse_eventbase.db --dry-run
+python classifier_v2/stage2_financial.py --db data/tse_eventbase.db
+```
+
+Full details — signal definition, thresholds, schema, calibration, and limitations — are in [`jquants/README.md`](jquants/README.md).
+
 ## Environment variables
 
 Copy `.env.example` to `.env` and fill in the values you need:
@@ -160,6 +184,7 @@ Copy `.env.example` to `.env` and fill in the values you need:
 | Variable | Required for | Default |
 |---|---|---|
 | `EDINET_API_KEY` | `run_edinet.py` / EDINET scraping | — |
+| `JQUANTS_API_KEY` | `run_jquants.py` / Stage 2 financial enrichment | — |
 | `OPENAI_API_KEY` | `run_ai_classify.py` | — |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint | OpenAI default |
 | `MODEL` | AI classification model | `gpt-4o` |
@@ -216,6 +241,12 @@ Daily OHLCV data keyed by `(ticker, date)`.
 ### `financials`
 
 Financial metrics extracted from EDINET securities reports: net sales, operating income, net income, total assets, EPS, BPS, ROE, etc.
+
+### `jquants_statements`
+
+Financial-statement summaries from the J-Quants API (`/fins/summary`), one row per disclosure: actual and company-forecast sales / operating profit / ordinary profit / net profit / EPS, plus annual dividends, keyed by `(ticker, disclosed_date)` and `current_fy_end`. The full API row is preserved in `raw_json`. Populated by `run_jquants.py`; consumed by Stage 2. See [`jquants/README.md`](jquants/README.md).
+
+The `events` table also carries a `data_*` column family (`data_direction`, `data_magnitude`, `data_surprise_pct`, `data_basis`, `data_metric`, `data_actual`, `data_forecast`, `data_statement_id`, `data_enriched_at`) holding the Stage 2 beat-vs-forecast signal — analogous to the `ai_*` (Stage 0/1) family.
 
 ### `tickers`
 

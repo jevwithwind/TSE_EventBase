@@ -67,22 +67,21 @@ events table (747K rows, 327K in-scope)
            │
            ▼  all events classified
 ┌─────────────────────────────────────────────────────┐
-│ Stage 2 (Planned): EDINET XBRL Fundamental Data      │
-│   Script:  stage0_financial.py                       │
-│   Source:  EDINET securities reports (XBRL)          │
-│   Method:  Parse actual financial statements for     │
-│            EPS, revenue, dividends                   │
-│   Output:  data_direction, data_magnitude            │
+│ Stage 2 (Implemented): J-Quants Fundamental Data     │
+│   Script:  stage2_financial.py                       │
+│   Source:  jquants_statements (/fins/summary)        │
+│   Method:  actual results vs. prior forecast         │
+│   Output:  events.data_* (direction, magnitude,      │
+│            surprise_pct, basis, actual, forecast)    │
 │                                                      │
-│   Compares:                                          │
-│   - Current EPS vs. prior year same period           │
-│   - Forecast EPS vs. actual reported EPS             │
-│   - Current DPS vs. prior year DPS                   │
+│   Signal (beat vs. company's own forecast):          │
+│   - FY: actual EPS vs. prior FY forecast EPS         │
+│   - Quarterly: forecast revision vs. prior           │
+│   - Dividend events use DPS (annual)                 │
 │                                                      │
-│   Provides objective ground-truth for validation     │
-│   of Stage 0 and Stage 1 labels. Magnitude κ is      │
-│   expected to improve from headline-only 0.13 to     │
-│   data-driven >0.61.                                 │
+│   Objective ground-truth for Stage 0 / 1             │
+│   validation. Thresholds tunable; details            │
+│   in jquants/README.md.                              │
 └─────────────────────────────────────────────────────┘
 ```
 

@@ -9,7 +9,7 @@ events without price data stay unclassified for the LLM (Stage 1).
 Architecture (three-stage thesis pipeline):
   Stage 0 (this):  market-implied sentiment from overnight returns
   Stage 1:         LLM headline classification for remaining events
-  Stage 2 (future): EDINET XBRL fundamental data for ground-truth
+  Stage 2:         J-Quants fundamentals — beat vs. prior forecast
 
 Thresholds (adjusted for Japanese large-cap daily volatility ~1.5%):
   > +2.0%  → positive / large

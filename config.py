@@ -14,6 +14,7 @@ SCRAPE_END_DATE = os.getenv("SCRAPE_END_DATE", datetime.now().strftime("%Y-%m-%d
 
 # API Keys
 EDINET_API_KEY = os.getenv("EDINET_API_KEY")
+JQUANTS_API_KEY = os.getenv("JQUANTS_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL") or None
 
@@ -22,6 +23,9 @@ MODEL = os.getenv("MODEL", "gpt-4o")
 
 # Export directory
 EXPORT_DIR = os.getenv("EXPORT_DIR", "data/exports")
+
+# J-Quants cache directory (per-day CSV cache for /fins/summary backfills)
+JQUANTS_CACHE_DIR = os.getenv("JQUANTS_CACHE_DIR", "data/jquants_cache")
 
 # Event type constants
 EVENT_TYPES = [

@@ -68,3 +68,41 @@ CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_doc_id ON events(source_doc_id);
 CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);
+
+-- J-Quants financial statement summaries (/fins/summary), Stage 2 source.
+-- One row per disclosure; column comments map back to the V2 abbreviated field names.
+CREATE TABLE IF NOT EXISTS jquants_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    disclosure_no TEXT,                -- DiscNo (unique disclosure id from J-Quants)
+    local_code TEXT,                   -- Code: 5-digit J-Quants code (e.g. "72030")
+    ticker TEXT,                       -- 4-digit TSE code (local_code[:4]); joins to events.ticker
+    disclosed_date DATE,               -- DiscDate (YYYY-MM-DD)
+    disclosed_time TEXT,               -- DiscTime
+    doc_type TEXT,                     -- DocType (period + consolidated/non + JP/IFRS)
+    period_type TEXT,                  -- CurPerType: 1Q / 2Q / 3Q / FY
+    current_fy_end DATE,               -- CurFYEn (fiscal-year-end; same-FY join key)
+    -- consolidated actual results (cumulative for the current period)
+    net_sales REAL,                    -- Sales
+    operating_profit REAL,             -- OP
+    ordinary_profit REAL,              -- OdP
+    profit REAL,                       -- NP (profit attributable to owners of parent)
+    eps REAL,                          -- EPS
+    total_assets REAL,                 -- TA
+    equity REAL,                       -- Eq
+    bps REAL,                          -- BPS
+    -- company forecast for the current full fiscal year
+    forecast_net_sales REAL,           -- FSales
+    forecast_operating_profit REAL,    -- FOP
+    forecast_ordinary_profit REAL,     -- FOdP
+    forecast_profit REAL,              -- FNP
+    forecast_eps REAL,                 -- FEPS
+    -- annual dividends per share
+    result_dps_annual REAL,            -- DivAnn
+    forecast_dps_annual REAL,          -- FDivAnn
+    raw_json TEXT,                     -- full original /fins/summary row as JSON
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jq_disclosure_no ON jquants_statements(disclosure_no);
+CREATE INDEX IF NOT EXISTS idx_jq_ticker_date ON jquants_statements(ticker, disclosed_date);
+CREATE INDEX IF NOT EXISTS idx_jq_ticker_fyend ON jquants_statements(ticker, current_fy_end);
