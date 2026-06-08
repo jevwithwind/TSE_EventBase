@@ -81,6 +81,37 @@ J-Quants rate limit. It is **resumable**: each day is cached under
 `data/jquants_cache/<year>/` and rows are de-duplicated on the J-Quants
 disclosure id, so re-running only fetches what's missing.
 
+## J-Quants-native clean dataset + export
+
+For a clean, J-Quants-only dataset of the **quantifiable events** (financial
+disclosures that carry a data-driven beat/miss signal), with full financials and
+price context:
+
+```bash
+# 1) Statements (the events + financials) — reuses cache if present
+python run_jquants.py --start-date 2016-06-08 --end-date 2025-12-31
+
+# 2) Daily split-adjusted prices for every event ticker
+#    (day-by-day, paced; large fetch ~hours for a 10-yr window)
+python run_jquants_prices.py --start-date 2016-06-08 --end-date 2025-12-31
+
+# 3) Company names / sectors (one call to /listed/info)
+python run_jquants_tickers.py
+
+# 4) Export the quantifiable events -> data/exports/
+python export_enriched_events.py
+```
+
+Output: `data/exports/quantifiable_events.{csv,parquet}` — one row per disclosure
+that has a computable signal, with identity (ticker, company, sector, market),
+the beat/miss signal (direction / magnitude / surprise vs. prior forecast), full
+actual **and** forecast financials, annual dividends, and price context
+(event-day close, next-day close, overnight return). The price fetcher is
+restricted to tickers that have a disclosure, mirrors the statements fetcher
+(paced day-by-day, 429 backoff, per-day gz cache, idempotent on `(ticker,date)`).
+Delisted companies are absent from the current `/listed/info` snapshot, so ~19%
+of event tickers have no name (codes + financials + signal are still present).
+
 `stage2_financial.py` is **resumable** too (it skips events where
 `data_enriched_at` is set) and **re-computable** (`--reset` clears `data_*` so
 you can recompute after changing thresholds or fetching more statements).

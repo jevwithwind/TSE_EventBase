@@ -71,3 +71,13 @@ class JQuantsClient:
     def fin_summary(self, code: str = "", date_yyyymmdd: str = "") -> pd.DataFrame:
         """Financial summaries for a single stock code or a single disclosure date."""
         return self._cli.get_fin_summary(code=code, date_yyyymmdd=date_yyyymmdd)
+
+    def eq_bars_daily(self, code: str = "", date_yyyymmdd: str = "") -> pd.DataFrame:
+        """Split-adjusted daily OHLCV (/equities/bars/daily) for one date
+        (all stocks) or one stock code's history. V2 (abbreviated) columns."""
+        return self._cli.get_eq_bars_daily(code=code, date_yyyymmdd=date_yyyymmdd)
+
+    def list_info(self, code: str = "", date_yyyymmdd: str = "") -> pd.DataFrame:
+        """Listed company info (/listed/info): code, name (JP/EN), sector, market.
+        With no args, returns the current snapshot of all listed companies."""
+        return self._cli.get_list(code=code, date_yyyymmdd=date_yyyymmdd)

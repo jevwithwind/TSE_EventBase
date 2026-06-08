@@ -39,6 +39,9 @@ run_scrape.py              →  scrape both in one command
 run_categorize.py          →  keyword-based event categorization (no API needed)
 run_prices.py              →  fetch historical stock prices via OpenBB
 run_jquants.py             →  [optional] fetch J-Quants financial statements (needs JQUANTS_API_KEY)
+run_jquants_prices.py      →  [optional] fetch J-Quants daily prices for event tickers
+run_jquants_tickers.py     →  [optional] populate tickers from J-Quants listed info
+export_enriched_events.py  →  [optional] export quantifiable events + financials + prices
 run_export.py              →  export tables to CSV / Parquet
 run_ai_classify.py         →  [optional] AI-powered classification
 generate_filter_list.py    →  export filtered event list for downstream pipelines

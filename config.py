@@ -27,6 +27,9 @@ EXPORT_DIR = os.getenv("EXPORT_DIR", "data/exports")
 # J-Quants cache directory (per-day CSV cache for /fins/summary backfills)
 JQUANTS_CACHE_DIR = os.getenv("JQUANTS_CACHE_DIR", "data/jquants_cache")
 
+# J-Quants daily-price cache directory (/equities/bars/daily backfills)
+JQUANTS_PRICES_CACHE_DIR = os.getenv("JQUANTS_PRICES_CACHE_DIR", "data/jquants_prices_cache")
+
 # Event type constants
 EVENT_TYPES = [
     "earnings",
