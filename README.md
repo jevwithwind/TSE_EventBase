@@ -167,8 +167,8 @@ python jquants/migrate_db.py --db data/tse_eventbase.db
 # Confirm the API columns your plan returns (one live call)
 python run_jquants.py --probe
 
-# Fetch financial statements (idempotent, cached under data/jquants_cache/)
-python run_jquants.py --start-date 2016-01-01 --end-date 2025-12-31
+# Fetch financial statements (day-by-day & paced; cached under data/jquants_cache/)
+python run_jquants.py --start-date 2016-06-08 --end-date 2025-12-31
 
 # Derive the beat/miss signal onto events (dry-run first)
 python classifier_v2/stage2_financial.py --db data/tse_eventbase.db --dry-run

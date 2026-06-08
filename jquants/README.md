@@ -64,16 +64,20 @@ does not touch `ai_*`. You can run it before or after the AI stages.
 # 0) Probe — ONE live call to confirm the columns your plan returns.
 python run_jquants.py --probe
 
-# 1) Fetch financial summaries into jquants_statements (idempotent, cached).
-#    Standard plan covers ~10 years; pad to your event range.
-python run_jquants.py --start-date 2016-01-01 --end-date 2025-12-31
+# 1) Fetch financial summaries into jquants_statements (day-by-day, paced,
+#    idempotent, cached). The Standard plan is a rolling ~10-year window, so
+#    start at/after that boundary (e.g. 2016-06-08 for a run in mid-2026).
+python run_jquants.py --start-date 2016-06-08 --end-date 2025-12-31
+#    If you hit HTTP 429 rate limits, slow the pace: --pace 1.0
 
 # 2) Enrich events with the beat-vs-forecast signal (dry-run first).
 python classifier_v2/stage2_financial.py --db data/tse_eventbase.db --dry-run
 python classifier_v2/stage2_financial.py --db data/tse_eventbase.db
 ```
 
-`run_jquants.py` is **resumable**: each trading day is cached under
+`run_jquants.py` fetches **one disclosure-date at a time**, paced (`--pace`,
+default 0.5s) with exponential 429 backoff — concurrent range-fetches trip the
+J-Quants rate limit. It is **resumable**: each day is cached under
 `data/jquants_cache/<year>/` and rows are de-duplicated on the J-Quants
 disclosure id, so re-running only fetches what's missing.
 
@@ -166,8 +170,9 @@ ones.
 - `/fins/summary` covers **financial-results disclosures only**. The ~493K
   non-earnings events (M&A, buybacks, leadership, large-holding, …) are not
   enrichable here — that's by design; Stage 2 augments, it doesn't replace TDnet.
-- **Standard plan ≈ 10 years** of history. Events near the start of 2016 may sit
-  at the edge of that window.
+- **Standard plan ≈ rolling 10-year window** (e.g. `2016-06-08 ~` for a run in
+  mid-2026); pre-window dates return HTTP 400 and are skipped, so events before
+  the boundary simply have no J-Quants data.
 - True beat/miss is computed at **fiscal-year end**; quarterly disclosures yield
   the guidance-revision signal. Half-year (2Q) forecast comparison is a natural
   future refinement (the `*2Q` forecast fields are already captured in

@@ -31,7 +31,7 @@ class JQuantsClient:
     it to be installed.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, max_workers: Optional[int] = None):
         api_key = api_key or JQUANTS_API_KEY
         if not api_key:
             raise RuntimeError(
@@ -48,8 +48,12 @@ class JQuantsClient:
             ) from e
 
         self._cli = jquantsapi.ClientV2(api_key=api_key)
-        logger.debug("JQuantsClient initialized (jquantsapi %s)",
-                     getattr(jquantsapi, "__version__", "?"))
+        if max_workers is not None:
+            # Lower concurrency to stay under the J-Quants rate limit on long
+            # range fetches (get_fin_summary_range fans out one call per day).
+            self._cli.MAX_WORKERS = int(max_workers)
+        logger.debug("JQuantsClient initialized (jquantsapi %s, MAX_WORKERS=%s)",
+                     getattr(jquantsapi, "__version__", "?"), self._cli.MAX_WORKERS)
 
     def fin_summary_range(self, start_date: str, end_date: str,
                           cache_dir: str = "") -> pd.DataFrame:

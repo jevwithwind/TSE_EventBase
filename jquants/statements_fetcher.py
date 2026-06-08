@@ -20,7 +20,8 @@ sys.path.insert(0, project_root)
 import json
 import logging
 import sqlite3
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -147,32 +148,42 @@ def _json_safe(row: dict) -> dict:
     return out
 
 
-def _year_chunks(start_date: str, end_date: str):
-    """Yield (chunk_start, chunk_end) 'YYYY-MM-DD' pairs, one per calendar year."""
+def _month_chunks(start_date: str, end_date: str):
+    """Yield (chunk_start, chunk_end) 'YYYY-MM-DD' pairs, one per calendar month.
+
+    Used to group day-by-day fetching for progress logging and per-month DB flushes.
+    """
     s = datetime.strptime(start_date, "%Y-%m-%d")
     e = datetime.strptime(end_date, "%Y-%m-%d")
     if e < s:
         return
-    for y in range(s.year, e.year + 1):
-        cs = s if y == s.year else datetime(y, 1, 1)
-        ce = e if y == e.year else datetime(y, 12, 31)
+    y, m = s.year, s.month
+    while (y, m) <= (e.year, e.month):
+        cs = s if (y == s.year and m == s.month) else datetime(y, m, 1)
+        nm = datetime(y + 1, 1, 1) if m == 12 else datetime(y, m + 1, 1)
+        last = nm - timedelta(days=1)
+        ce = e if (y == e.year and m == e.month) else last
         yield cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
 
 
 class JQuantsStatementsFetcher:
     """Fetches /fins/summary into the jquants_statements table."""
 
-    def __init__(self, db_path: str = DB_PATH, client=None, api_key: Optional[str] = None):
+    def __init__(self, db_path: str = DB_PATH, client=None,
+                 api_key: Optional[str] = None, max_workers: Optional[int] = None):
         self.db_path = db_path
         self._client = client
         self._api_key = api_key
+        self._max_workers = max_workers
 
     @property
     def client(self):
         """Lazily build a JQuantsClient (so --dry-run never needs the API key)."""
         if self._client is None:
             from jquants.client import JQuantsClient
-            self._client = JQuantsClient(api_key=self._api_key)
+            self._client = JQuantsClient(api_key=self._api_key,
+                                         max_workers=self._max_workers)
         return self._client
 
     def _parse_row(self, row: dict) -> Optional[tuple]:
@@ -213,23 +224,77 @@ class JQuantsStatementsFetcher:
         conn.commit()
         return conn.total_changes - before
 
-    def fetch_date_range(self, start_date: str, end_date: str,
-                         cache_dir: str = "", dry_run: bool = False) -> dict:
-        """Fetch /fins/summary for [start_date, end_date], chunked by year.
+    def _call_day(self, yyyymmdd: str, retry_waits: tuple) -> Optional[pd.DataFrame]:
+        """Fetch one disclosure date from the API with adaptive 429 backoff.
 
-        Returns summary stats. Idempotent: existing disclosures are skipped via
-        the unique index on disclosure_no.
+        Returns the DataFrame (possibly empty) on success, or None if the date is
+        outside the subscription window or still failing after all retries.
         """
-        chunks = list(_year_chunks(start_date, end_date))
-        if not chunks:
+        for attempt in range(len(retry_waits) + 1):
+            try:
+                return self.client.fin_summary(date_yyyymmdd=yyyymmdd)
+            except Exception as e:
+                msg = str(e)
+                if "subscription covers" in msg or " 400 " in msg:
+                    logger.debug("out-of-window %s: %s", yyyymmdd, msg[:80])
+                    return None
+                if "429" in msg and attempt < len(retry_waits):
+                    wait = retry_waits[attempt]
+                    logger.warning("429 on %s — backing off %ds (retry %d/%d)",
+                                   yyyymmdd, wait, attempt + 1, len(retry_waits))
+                    time.sleep(wait)
+                    continue
+                logger.error("fetch failed %s: %s", yyyymmdd, msg[:120])
+                return None
+        return None
+
+    def _fetch_day(self, yyyymmdd: str, cache_dir: str, pace: float,
+                   retry_waits: tuple) -> tuple:
+        """Return (df_or_None, was_api_call). Reuses the per-day gz cache if present."""
+        cache_path = ""
+        if cache_dir:
+            cache_path = os.path.join(cache_dir, yyyymmdd[:4],
+                                      f"v2_fin_summary_{yyyymmdd}.csv.gz")
+            if os.path.isfile(cache_path):
+                try:
+                    return pd.read_csv(cache_path, dtype=str), False
+                except Exception:
+                    pass  # corrupt/empty cache → refetch
+
+        df = self._call_day(yyyymmdd, retry_waits)
+
+        if cache_path and df is not None and not df.empty:
+            try:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                df.to_csv(cache_path, index=False)
+            except Exception as e:
+                logger.debug("cache write failed %s: %s", yyyymmdd, e)
+
+        if pace > 0:
+            time.sleep(pace)
+        return df, True
+
+    def fetch_date_range(self, start_date: str, end_date: str,
+                         cache_dir: str = "", dry_run: bool = False,
+                         pace: float = 0.5,
+                         retry_waits: tuple = (15, 30, 60, 120)) -> dict:
+        """Fetch /fins/summary day-by-day for [start_date, end_date].
+
+        Requests one disclosure-date at a time, paced by ``pace`` seconds with
+        exponential 429 backoff (``retry_waits``), to respect the J-Quants
+        per-window rate limit. Weekends are skipped (no disclosures). Each
+        non-empty day is cached as gz so re-runs are cheap; DB inserts use
+        INSERT OR IGNORE, so the whole run is idempotent and resumable.
+        """
+        months = list(_month_chunks(start_date, end_date))
+        if not months:
             logger.warning("Empty date range: %s .. %s", start_date, end_date)
             return {"fetched": 0, "inserted": 0, "dry_run": dry_run}
 
         if dry_run:
-            for cs, ce in chunks:
-                logger.info("[dry-run] would fetch /fins/summary %s .. %s", cs, ce)
-            logger.info("[dry-run] %d yearly chunk(s); no API calls, no DB writes", len(chunks))
-            return {"fetched": 0, "inserted": 0, "chunks": len(chunks), "dry_run": True}
+            logger.info("[dry-run] would fetch %d month(s) day-by-day (%s .. %s); "
+                        "no API calls, no DB writes", len(months), start_date, end_date)
+            return {"fetched": 0, "inserted": 0, "months": len(months), "dry_run": True}
 
         if cache_dir:
             os.makedirs(cache_dir, exist_ok=True)
@@ -241,28 +306,39 @@ class JQuantsStatementsFetcher:
 
         total_fetched = 0
         total_inserted = 0
+        api_calls = 0
+        cache_hits = 0
         try:
-            for cs, ce in chunks:
-                logger.info("Fetching /fins/summary %s .. %s", cs, ce)
-                df = self.client.fin_summary_range(cs, ce, cache_dir=cache_dir)
-                n = 0 if df is None or df.empty else len(df)
-                total_fetched += n
+            for cs, ce in months:
+                day = datetime.strptime(cs, "%Y-%m-%d")
+                last = datetime.strptime(ce, "%Y-%m-%d")
+                month_rows = []
+                month_fetched = 0
+                while day <= last:
+                    if day.weekday() < 5:  # Mon-Fri; disclosures don't post on weekends
+                        ymd = day.strftime("%Y%m%d")
+                        df, was_api = self._fetch_day(ymd, cache_dir, pace, retry_waits)
+                        api_calls += 1 if was_api else 0
+                        cache_hits += 0 if was_api else 1
+                        if df is not None and not df.empty:
+                            month_fetched += len(df)
+                            for rec in df.to_dict(orient="records"):
+                                parsed = self._parse_row(rec)
+                                if parsed:
+                                    month_rows.append(parsed)
+                    day += timedelta(days=1)
 
-                rows = []
-                if n:
-                    for rec in df.to_dict(orient="records"):
-                        parsed = self._parse_row(rec)
-                        if parsed:
-                            rows.append(parsed)
-
-                inserted = self._insert_batch(conn, rows)
+                inserted = self._insert_batch(conn, month_rows)
+                total_fetched += month_fetched
                 total_inserted += inserted
-                logger.info("  %s .. %s: fetched %d, inserted %d new",
-                            cs, ce, n, inserted)
+                logger.info("  %s: fetched %d rows, inserted %d new "
+                            "(running: api=%d cache=%d)",
+                            cs[:7], month_fetched, inserted, api_calls, cache_hits)
         finally:
             conn.close()
 
-        logger.info("J-Quants fetch complete. Fetched %d rows, inserted %d new.",
-                    total_fetched, total_inserted)
+        logger.info("J-Quants fetch complete. Fetched %d rows, inserted %d new "
+                    "(api_calls=%d, cache_hits=%d).",
+                    total_fetched, total_inserted, api_calls, cache_hits)
         return {"fetched": total_fetched, "inserted": total_inserted,
-                "chunks": len(chunks), "dry_run": False}
+                "api_calls": api_calls, "cache_hits": cache_hits, "dry_run": False}

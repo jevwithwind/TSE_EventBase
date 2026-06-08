@@ -85,20 +85,24 @@ def main():
                         help="Make ONE live call and dump returned columns + sample, then exit.")
     parser.add_argument("--probe-code", default="", help="Stock code for --probe (default 72030).")
     parser.add_argument("--probe-date", default="", help="Disclosure date YYYYMMDD for --probe.")
+    parser.add_argument("--pace", type=float, default=0.5,
+                        help="Seconds to sleep between per-day API calls (default 0.5; "
+                             "raise if you hit 429 rate limits).")
     args = parser.parse_args()
 
     if args.probe:
         return run_probe(args.api_key, args.probe_code, args.probe_date)
 
     fetcher = JQuantsStatementsFetcher(db_path=args.db, api_key=args.api_key)
-    logger.info("Fetching J-Quants /fins/summary from %s to %s", args.start_date, args.end_date)
+    logger.info("Fetching J-Quants /fins/summary from %s to %s (day-by-day, pace=%.2fs)",
+                args.start_date, args.end_date, args.pace)
     result = fetcher.fetch_date_range(
         args.start_date, args.end_date,
-        cache_dir=args.cache_dir, dry_run=args.dry_run,
+        cache_dir=args.cache_dir, dry_run=args.dry_run, pace=args.pace,
     )
 
     if args.dry_run:
-        print(f"\nDry run: {result.get('chunks', 0)} yearly chunk(s) would be fetched. "
+        print(f"\nDry run: {result.get('months', 0)} month(s) would be fetched day-by-day. "
               f"No API calls made, no rows written.")
     else:
         print(f"\nJ-Quants fetch complete. Fetched {result['fetched']} rows, "
