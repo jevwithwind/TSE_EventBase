@@ -97,22 +97,23 @@ def test_surprise_none_cases():
 # ============================================================================
 
 def test_classify_large_positive():
-    assert s2.classify_surprise(0.15) == ("positive", "large")
+    assert s2.classify_surprise(s2.LARGE_THRESHOLD + 0.05) == ("positive", "large")
 
 
 def test_classify_medium_negative():
-    assert s2.classify_surprise(-0.05) == ("negative", "medium")
+    mid = (s2.MEDIUM_THRESHOLD + s2.LARGE_THRESHOLD) / 2
+    assert s2.classify_surprise(-mid) == ("negative", "medium")
 
 
 def test_classify_small_is_neutral():
-    assert s2.classify_surprise(0.01) == ("neutral", "small")
+    assert s2.classify_surprise(s2.MEDIUM_THRESHOLD / 2) == ("neutral", "small")
 
 
 def test_classify_boundaries():
-    # exactly at thresholds
-    assert s2.classify_surprise(0.03) == ("positive", "medium")
-    assert s2.classify_surprise(0.10) == ("positive", "large")
-    assert s2.classify_surprise(-0.03) == ("negative", "medium")
+    # exactly at the (calibrated) thresholds
+    assert s2.classify_surprise(s2.MEDIUM_THRESHOLD) == ("positive", "medium")
+    assert s2.classify_surprise(s2.LARGE_THRESHOLD) == ("positive", "large")
+    assert s2.classify_surprise(-s2.MEDIUM_THRESHOLD) == ("negative", "medium")
 
 
 # ============================================================================
@@ -137,8 +138,10 @@ def test_build_signal_fy_actual_vs_forecast():
     assert sig is not None
     assert sig.basis == "actual_vs_forecast"
     assert sig.actual == 360.0 and sig.forecast == 300.0
-    assert sig.direction == "positive"  # +20%
-    assert sig.magnitude == "large"
+    assert sig.surprise_pct == pytest.approx(0.20)
+    assert sig.direction == "positive"
+    # magnitude flows from the (calibrated) thresholds
+    assert (sig.direction, sig.magnitude) == s2.classify_surprise(0.20)
 
 
 def test_build_signal_forecast_revision():
@@ -149,7 +152,9 @@ def test_build_signal_forecast_revision():
     sig = s2.build_signal(stmts, 1, "eps", "forecast_eps", "eps")
     assert sig.basis == "forecast_revision"
     assert sig.actual == 330.0 and sig.forecast == 300.0
-    assert sig.direction == "positive" and sig.magnitude == "large"  # +10%
+    assert sig.surprise_pct == pytest.approx(0.10)
+    assert sig.direction == "positive"
+    assert (sig.direction, sig.magnitude) == s2.classify_surprise(0.10)
 
 
 def test_build_signal_none_without_prior_forecast():
@@ -207,7 +212,7 @@ def test_end_to_end_enrichment():
 
     fy = conn.execute("SELECT * FROM events WHERE id=?", (e_fy,)).fetchone()
     assert fy["data_direction"] == "positive"
-    assert fy["data_magnitude"] == "medium"           # +9.1%
+    assert fy["data_magnitude"] == s2.classify_surprise((360.0 - 330.0) / 330.0)[1]  # +9.1%
     assert fy["data_basis"] == "actual_vs_forecast"
     assert fy["data_metric"] == "eps"
     assert fy["data_actual"] == 360.0 and fy["data_forecast"] == 330.0
@@ -217,7 +222,8 @@ def test_end_to_end_enrichment():
     rev = conn.execute("SELECT * FROM events WHERE id=?", (e_rev,)).fetchone()
     assert rev["data_basis"] == "forecast_revision"
     assert rev["data_metric"] == "eps"
-    assert rev["data_direction"] == "positive" and rev["data_magnitude"] == "large"
+    assert rev["data_direction"] == "positive"
+    assert rev["data_magnitude"] == s2.classify_surprise((330.0 - 300.0) / 300.0)[1]  # +10%
 
     div = conn.execute("SELECT * FROM events WHERE id=?", (e_div,)).fetchone()
     assert div["data_metric"] == "dps"                # dividend prefers DPS signal

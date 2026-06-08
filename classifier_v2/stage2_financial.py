@@ -30,9 +30,10 @@ NOT compared to the full-year forecast (that would be apples-to-oranges); they
 instead surface the guidance signal above. Half-year (2Q) forecast comparison
 is a possible future refinement.
 
-Thresholds (tunable; calibrate against classifier_v2/validation/ gold standard):
-  |surprise| >= 10%  -> large
-  |surprise| >=  3%  -> medium (and sets direction)
+Thresholds (calibrated 2026-06-08 to the observed surprise distribution — JP EPS
+bases are small, so %-surprises run large; non-zero median ~17%):
+  |surprise| >= 25%  -> large
+  |surprise| >=  5%  -> medium (and sets direction)
   otherwise          -> small / neutral
 
 Usage:
@@ -54,8 +55,8 @@ logger = logging.getLogger(__name__)
 
 # ---------- Config ----------
 
-LARGE_THRESHOLD = 0.10   # ±10% surprise -> large
-MEDIUM_THRESHOLD = 0.03  # ±3% surprise -> medium (and non-neutral direction)
+LARGE_THRESHOLD = 0.25   # ±25% surprise -> large
+MEDIUM_THRESHOLD = 0.05  # ±5% surprise -> medium (and non-neutral direction)
 
 SCOPE_EVENT_TYPES = ("earnings", "forecast_revision", "dividend")
 
